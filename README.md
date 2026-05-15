@@ -56,7 +56,7 @@ An unofficial Home Assistant integration for **Kohler Konnect** devices, with fu
    - **OAuth (recommended).** The integration shows a Kohler B2C sign-in URL. Open it in a browser, sign in, then copy the `code=` value from the URL that the browser fails to open (the page tries to launch `msauth://...`) and paste it back into Home Assistant. The integration stores only a refresh token and rotates it automatically.
    - **Legacy password.** Enter your Kohler Konnect email and password. Kept as a fallback; Kohler's backend has started rejecting password-grant tokens on some endpoints, so OAuth is preferred for new installs.
 
-> ⚠️ **OAuth caveat:** the redirect URI registered with Kohler's B2C client is the Android app's `msauth://com.kohler.hermoth/<sig-hash>` scheme. The `<sig-hash>` placeholder in `const.py` (`B2C_OAUTH_REDIRECT_URI`) must be set to the real URL-encoded SHA1 of the Kohler APK signing cert before OAuth will succeed end-to-end. Extract it via `apksigner -v --print-certs Kohler.apk`.
+> ⚠️ **OAuth UX:** after signing in, the browser tries to open `msauth://com.kohler.hermoth/...` (the Kohler Android app's redirect URI). This will fail in a desktop browser — that is expected. Copy the `code=` value from the URL bar of the failed page and paste it into the Home Assistant prompt.
 
 ---
 
