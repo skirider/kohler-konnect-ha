@@ -30,9 +30,10 @@ B2C_OAUTH_TOKEN_URL = (
     f"/{B2C_OAUTH_POLICY}/oauth2/v2.0/token"
 )
 # Mobile-app redirect URI registered with the Kohler B2C client.
-# Hash is base64url SHA-1 of the signing certificate DER bytes,
-# extracted from com.kohler.hermoth APK v2 signing block.
-B2C_OAUTH_REDIRECT_URI = "msauth://com.kohler.hermoth/2DuDM2vGmcL4bKPn2xKzKpsy68k="
+# Stored with %3D (not =) to match the value in res/raw/msal_config.json.
+# MSAL's URLEncoder double-encodes % → %25, so the authorize URL carries
+# %253D; B2C decodes once to %3D, matching the registered URI exactly.
+B2C_OAUTH_REDIRECT_URI = "msauth://com.kohler.hermoth/2DuDM2vGmcL4bKPn2xKzKpsy68k%3D"
 
 # Service token (bootstrap — no user needed)
 SERVICE_TOKEN_URL = (
