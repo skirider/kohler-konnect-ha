@@ -1,18 +1,26 @@
 """Kohler Konnect API client."""
 from __future__ import annotations
 
+import base64
+import hashlib
+import json as _json
 import logging
 import os
+import secrets
 import ssl
 import tempfile
-import base64
+import time
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
 
 from .const import (
     API_BASE,
     B2C_CLIENT_ID,
+    B2C_OAUTH_AUTHORIZE_URL,
+    B2C_OAUTH_REDIRECT_URI,
+    B2C_OAUTH_TOKEN_URL,
     B2C_SCOPE,
     B2C_TOKEN_URL,
     SERVICE_TOKEN_APIM_KEY,
@@ -21,6 +29,64 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ReauthRequired(Exception):
+    """Raised when the stored OAuth refresh token is no longer valid."""
+
+
+def _extract_oid(jwt_token: str) -> str | None:
+    """Decode a JWT payload and return the oid (or sub) claim."""
+    payload = jwt_token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = _json.loads(base64.b64decode(payload))
+    return claims.get("oid") or claims.get("sub")
+
+
+def generate_pkce_pair() -> tuple[str, str]:
+    """Return (code_verifier, code_challenge) for S256 PKCE."""
+    verifier = secrets.token_urlsafe(64)[:128]
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+    return verifier, challenge
+
+
+def build_authorize_url(code_challenge: str, state: str) -> str:
+    """Build the B2C authorize URL for the OAuth + PKCE sign-in flow."""
+    params = {
+        "client_id": B2C_CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": B2C_OAUTH_REDIRECT_URI,
+        "scope": B2C_SCOPE,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    }
+    return f"{B2C_OAUTH_AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def exchange_code_for_tokens(code: str, code_verifier: str) -> dict[str, Any]:
+    """Exchange an authorization code for an access + refresh token pair."""
+    resp = requests.post(
+        B2C_OAUTH_TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "client_id": B2C_CLIENT_ID,
+            "code": code,
+            "redirect_uri": B2C_OAUTH_REDIRECT_URI,
+            "code_verifier": code_verifier,
+            "scope": B2C_SCOPE,
+        },
+        timeout=15,
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"Token exchange failed: {resp.status_code} {resp.text}"
+        )
+    return resp.json()
 
 # The mTLS client certificate (embedded from app_certificate.p12)
 # CN=apim-prod-us, valid through Aug 2026
@@ -116,13 +182,27 @@ def _ensure_cert_files() -> tuple[str, str]:
 class KohlerKonnectAPI:
     """Client for the Kohler Konnect API."""
 
-    def __init__(self, username: str, password: str) -> None:
+    def __init__(
+        self,
+        *,
+        username: str | None = None,
+        password: str | None = None,
+        refresh_token: str | None = None,
+    ) -> None:
         self._username = username
         self._password = password
+        self._refresh_token = refresh_token
         self._user_token: str | None = None
+        self._token_expires_at: float = 0.0
         self._apim_key: str | None = None
         self._tenant_id: str | None = None
         self._devices: list[dict] = []
+        self._mode = "oauth" if refresh_token else "ropc"
+
+    @property
+    def refresh_token(self) -> str | None:
+        """Return the current refresh token (may have rotated since init)."""
+        return self._refresh_token
 
     def _session(self) -> requests.Session:
         """Build a requests session with mTLS client cert."""
@@ -133,12 +213,21 @@ class KohlerKonnectAPI:
         return s
 
     def _headers(self) -> dict[str, str]:
+        self._ensure_fresh_token()
         return {
             "Authorization": f"Bearer {self._user_token}",
             "Ocp-Apim-Subscription-Key": self._apim_key,
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+
+    def _ensure_fresh_token(self) -> None:
+        """Refresh the user token if it's near expiry (OAuth mode only)."""
+        if self._mode != "oauth":
+            return
+        if self._user_token and time.time() < self._token_expires_at:
+            return
+        self._fetch_user_token_oauth()
 
     # ------------------------------------------------------------------ #
     # Auth                                                                 #
@@ -158,7 +247,7 @@ class KohlerKonnectAPI:
         _LOGGER.debug("Service token fetched, APIM key acquired")
 
     def _fetch_user_token(self) -> None:
-        """Fetch user access token via ROPC flow."""
+        """Fetch user access token via legacy ROPC flow."""
         resp = requests.post(
             B2C_TOKEN_URL,
             data={
@@ -173,19 +262,58 @@ class KohlerKonnectAPI:
         resp.raise_for_status()
         data = resp.json()
         self._user_token = data["access_token"]
-        # Extract tenant (OID) from token payload
-        import json as _json
-        payload = self._user_token.split(".")[1]
-        # Pad base64
-        payload += "=" * (-len(payload) % 4)
-        claims = _json.loads(base64.b64decode(payload))
-        self._tenant_id = claims.get("oid") or claims.get("sub")
-        _LOGGER.debug("User token fetched, tenant_id=%s", self._tenant_id)
+        self._tenant_id = _extract_oid(self._user_token)
+        _LOGGER.debug("User token fetched (ROPC), tenant_id=%s", self._tenant_id)
+
+    def _fetch_user_token_oauth(self) -> None:
+        """Refresh the user access token using the stored refresh_token."""
+        resp = requests.post(
+            B2C_OAUTH_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "client_id": B2C_CLIENT_ID,
+                "refresh_token": self._refresh_token,
+                "scope": B2C_SCOPE,
+            },
+            timeout=15,
+        )
+        if resp.status_code == 400:
+            try:
+                body = resp.json()
+            except ValueError:
+                body = {}
+            if body.get("error") == "invalid_grant":
+                raise ReauthRequired(
+                    body.get("error_description", "refresh_token rejected")
+                )
+        resp.raise_for_status()
+        data = resp.json()
+        self._user_token = data["access_token"]
+        self._token_expires_at = (
+            time.time() + int(data.get("expires_in", 3600)) - 60
+        )
+        if "refresh_token" in data:
+            self._refresh_token = data["refresh_token"]
+        self._tenant_id = _extract_oid(self._user_token)
+        _LOGGER.debug("User token fetched (OAuth), tenant_id=%s", self._tenant_id)
+
+    def apply_oauth_tokens(self, token_response: dict[str, Any]) -> None:
+        """Seed this client from a fresh authorization_code token response."""
+        self._mode = "oauth"
+        self._user_token = token_response["access_token"]
+        self._refresh_token = token_response.get("refresh_token")
+        self._token_expires_at = (
+            time.time() + int(token_response.get("expires_in", 3600)) - 60
+        )
+        self._tenant_id = _extract_oid(self._user_token)
 
     def authenticate(self) -> None:
         """Full auth: service token + user token."""
         self._fetch_service_token()
-        self._fetch_user_token()
+        if self._mode == "oauth":
+            self._fetch_user_token_oauth()
+        else:
+            self._fetch_user_token()
 
     # ------------------------------------------------------------------ #
     # Device discovery                                                     #

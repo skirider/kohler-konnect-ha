@@ -52,7 +52,11 @@ An unofficial Home Assistant integration for **Kohler Konnect** devices, with fu
 
 1. Go to **Settings** → **Devices & Services** → **Add Integration**
 2. Search for **Kohler Konnect**
-3. Enter your Kohler Konnect email and password (same credentials as the official app)
+3. Pick a sign-in method:
+   - **OAuth (recommended).** The integration shows a Kohler B2C sign-in URL. Open it in a browser, sign in, then copy the `code=` value from the URL that the browser fails to open (the page tries to launch `msauth://...`) and paste it back into Home Assistant. The integration stores only a refresh token and rotates it automatically.
+   - **Legacy password.** Enter your Kohler Konnect email and password. Kept as a fallback; Kohler's backend has started rejecting password-grant tokens on some endpoints, so OAuth is preferred for new installs.
+
+> ⚠️ **OAuth caveat:** the redirect URI registered with Kohler's B2C client is the Android app's `msauth://com.kohler.hermoth/<sig-hash>` scheme. The `<sig-hash>` placeholder in `const.py` (`B2C_OAUTH_REDIRECT_URI`) must be set to the real URL-encoded SHA1 of the Kohler APK signing cert before OAuth will succeed end-to-end. Extract it via `apksigner -v --print-certs Kohler.apk`.
 
 ---
 
@@ -113,7 +117,7 @@ automation:
 This integration uses the undocumented Kohler Konnect REST API:
 
 1. **Service token** — mTLS request to Kohler's Azure APIM to get a runtime API key
-2. **User token** — Azure B2C ROPC flow with your email/password → JWT bearer token
+2. **User token** — Azure B2C `B2C_1A_signin` policy via OAuth Authorization Code + PKCE (or legacy ROPC for fallback) → JWT bearer token, with automatic refresh-token rotation
 3. **API calls** — all device state and commands sent to `api-kohler-us.kohler.io` with both headers
 
 State is polled every 30 seconds. Commands are sent immediately.
