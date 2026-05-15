@@ -138,7 +138,6 @@ PRs welcome! Especially interested in:
 
 If this integration saved you some time (or a cold shower), consider buying me a coffee ☕
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/kenyonj)
 
 ---
 
