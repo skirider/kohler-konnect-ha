@@ -18,6 +18,23 @@ B2C_TOKEN_URL = (
     f"/{B2C_POLICY}/oauth2/v2.0/token"
 )
 
+# OAuth (Authorization Code + PKCE against B2C_1A_signin). URLs need the
+# /tfp/ prefix because the Kohler mobile apps use the trust-framework path.
+B2C_OAUTH_POLICY = "B2C_1A_signin"
+B2C_OAUTH_AUTHORIZE_URL = (
+    f"https://konnectkohler.b2clogin.com/tfp/{B2C_TENANT}"
+    f"/{B2C_OAUTH_POLICY}/oauth2/v2.0/authorize"
+)
+B2C_OAUTH_TOKEN_URL = (
+    f"https://konnectkohler.b2clogin.com/tfp/{B2C_TENANT}"
+    f"/{B2C_OAUTH_POLICY}/oauth2/v2.0/token"
+)
+# Mobile-app redirect URI registered with the Kohler B2C client. The
+# trailing <sig-hash>%3D is the URL-encoded base64 SHA1 of the Android
+# APK signing certificate; substitute with the real value captured from
+# the APK (apksigner -v --print-certs Kohler.apk).
+B2C_OAUTH_REDIRECT_URI = "msauth://com.kohler.hermoth/<sig-hash>%3D"
+
 # Service token (bootstrap — no user needed)
 SERVICE_TOKEN_URL = (
     "https://az-amer-prod-kohlerkonnect-apim.azure-api.net/token/api/v1/token/"

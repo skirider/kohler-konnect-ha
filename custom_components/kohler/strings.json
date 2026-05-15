@@ -3,19 +3,43 @@
     "step": {
       "user": {
         "title": "Kohler Konnect",
-        "description": "Enter your Kohler Konnect account credentials.",
+        "description": "Choose how to sign in. OAuth is recommended; the legacy password flow is provided as a fallback for existing accounts.",
+        "data": {
+          "method": "Sign-in method"
+        }
+      },
+      "oauth": {
+        "title": "Sign in with Kohler",
+        "description": "1. Open this URL in a browser and sign in to your Kohler account:\n\n{authorize_url}\n\n2. After signing in, the browser will try to open `msauth://...` and fail. That is expected.\n\n3. From the URL bar of the failed page, copy the value of the `code=` query parameter and paste it below.",
+        "data": {
+          "code": "Authorization code"
+        }
+      },
+      "ropc": {
+        "title": "Kohler Konnect (legacy)",
+        "description": "Enter your Kohler Konnect account credentials. Note: this method may stop working in the future; prefer OAuth where possible.",
         "data": {
           "username": "Email address",
+          "password": "Password"
+        }
+      },
+      "reauth_ropc": {
+        "title": "Re-enter your password",
+        "description": "Your stored credentials are no longer valid. Re-enter your password to continue.",
+        "data": {
           "password": "Password"
         }
       }
     },
     "error": {
       "cannot_connect": "Unable to connect. Check credentials and try again.",
-      "no_devices": "No devices found on this account."
+      "no_devices": "No devices found on this account.",
+      "invalid_code": "The authorization code could not be exchanged. Make sure you copied the full `code` value and try again.",
+      "no_refresh_token": "Sign-in succeeded but no refresh token was issued. Check the integration logs."
     },
     "abort": {
-      "already_configured": "This account is already configured."
+      "already_configured": "This account is already configured.",
+      "reauth_successful": "Re-authentication was successful."
     }
   }
 }

@@ -7,9 +7,10 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import KohlerKonnectAPI
+from .api import KohlerKonnectAPI, ReauthRequired
 from .const import DOMAIN, SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -17,16 +18,26 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.WATER_HEATER]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Kohler Konnect from a config entry."""
-    api = KohlerKonnectAPI(
+def _build_api(entry: ConfigEntry) -> KohlerKonnectAPI:
+    """Construct an API client from a config entry's stored auth data."""
+    if entry.data.get("auth_method") == "oauth" or "refresh_token" in entry.data:
+        return KohlerKonnectAPI(refresh_token=entry.data["refresh_token"])
+    return KohlerKonnectAPI(
         username=entry.data["username"],
         password=entry.data["password"],
     )
 
-    await hass.async_add_executor_job(api.authenticate)
 
-    coordinator = KohlerKonnectCoordinator(hass, api)
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Kohler Konnect from a config entry."""
+    api = _build_api(entry)
+
+    try:
+        await hass.async_add_executor_job(api.authenticate)
+    except ReauthRequired as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
+
+    coordinator = KohlerKonnectCoordinator(hass, entry, api)
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
@@ -49,7 +60,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 class KohlerKonnectCoordinator(DataUpdateCoordinator):
     """Coordinator to fetch Kohler Konnect state periodically."""
 
-    def __init__(self, hass: HomeAssistant, api: KohlerKonnectAPI) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        api: KohlerKonnectAPI,
+    ) -> None:
         super().__init__(
             hass,
             _LOGGER,
@@ -57,10 +73,21 @@ class KohlerKonnectCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(seconds=SCAN_INTERVAL),
         )
         self.api = api
+        self._entry = entry
 
     async def _async_update_data(self):
         """Fetch data from API."""
         try:
-            return await self.hass.async_add_executor_job(self.api.get_all_state)
+            data = await self.hass.async_add_executor_job(self.api.get_all_state)
+        except ReauthRequired as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
         except Exception as err:
             raise UpdateFailed(f"Error communicating with Kohler API: {err}") from err
+
+        new_rt = self.api.refresh_token
+        if new_rt and new_rt != self._entry.data.get("refresh_token"):
+            self.hass.config_entries.async_update_entry(
+                self._entry,
+                data={**self._entry.data, "refresh_token": new_rt},
+            )
+        return data
