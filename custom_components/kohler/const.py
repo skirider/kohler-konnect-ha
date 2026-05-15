@@ -29,11 +29,10 @@ B2C_OAUTH_TOKEN_URL = (
     f"https://konnectkohler.b2clogin.com/tfp/{B2C_TENANT}"
     f"/{B2C_OAUTH_POLICY}/oauth2/v2.0/token"
 )
-# Mobile-app redirect URI registered with the Kohler B2C client. The
-# trailing <sig-hash>%3D is the URL-encoded base64 SHA1 of the Android
-# APK signing certificate; substitute with the real value captured from
-# the APK (apksigner -v --print-certs Kohler.apk).
-B2C_OAUTH_REDIRECT_URI = "msauth://com.kohler.hermoth/<sig-hash>%3D"
+# Mobile-app redirect URI registered with the Kohler B2C client.
+# Hash is base64url SHA-1 of the signing certificate DER bytes,
+# extracted from com.kohler.hermoth APK v2 signing block.
+B2C_OAUTH_REDIRECT_URI = "msauth://com.kohler.hermoth/2DuDM2vGmcL4bKPn2xKzKpsy68k="
 
 # Service token (bootstrap — no user needed)
 SERVICE_TOKEN_URL = (
