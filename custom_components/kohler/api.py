@@ -350,7 +350,9 @@ class KohlerKonnectAPI:
             timeout=15,
         )
         resp.raise_for_status()
-        return resp.json()
+        body = resp.json()
+        _LOGGER.debug("gcsadvancestate raw response: %s", body)
+        return body
 
     def get_evo_state(self, device_id: str) -> dict[str, Any]:
         """Get the EVO state (connection state, error state)."""
@@ -416,7 +418,7 @@ class KohlerKonnectAPI:
         """Start a saved preset."""
         s = self._session()
         resp = s.post(
-            f"{API_BASE}/platform/api/v1/commands/gcs/startpreset",
+            f"{API_BASE}/platform/api/v1/commands/gcs/preset",
             headers=self._headers(),
             json={
                 "deviceId": device_id,
@@ -430,23 +432,15 @@ class KohlerKonnectAPI:
         return resp.json()
 
     def stop_shower(self, device_id: str) -> dict[str, Any]:
-        """Stop the shower (solo write system = all valves off)."""
+        """Stop the shower."""
         s = self._session()
         resp = s.post(
-            f"{API_BASE}/platform/api/v1/commands/gcs/solowritesystem",
+            f"{API_BASE}/platform/api/v1/commands/gcs/turn_off",
             headers=self._headers(),
             json={
                 "deviceId": device_id,
                 "tenantId": self._tenant_id,
                 "sku": SKU_GCS,
-                "anthemValveControlModel": {
-                    "valveIndex": "Valve1",
-                    "out1": "0",
-                    "out2": "0",
-                    "out3": "0",
-                    "temperatureSetpoint": "0",
-                    "flowSetpoint": "0",
-                },
             },
             timeout=15,
         )

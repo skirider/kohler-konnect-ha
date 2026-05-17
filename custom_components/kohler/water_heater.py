@@ -100,8 +100,15 @@ class KohlerAnthemShower(CoordinatorEntity, WaterHeaterEntity):
         if warmup_state != "warmUpNotInProgress":
             return OPERATION_WARMUP
 
+        # An active preset means the shower is running, regardless of whether
+        # the flow sensor has caught up yet. Avoids the brief "off" flicker
+        # after start_preset succeeds but atFlow still reads 0.
+        preset = adv.get("presetOrExperienceId", "0")
+        if preset not in ("0", "", None):
+            return OPERATION_RUNNING
+
         for valve in adv.get("valveState", []):
-            if float(valve.get("atFlow", "0")) > 0:
+            if float(valve.get("atFlow", "0") or "0") > 0:
                 return OPERATION_RUNNING
 
         return OPERATION_OFF
