@@ -30,8 +30,8 @@ An unofficial Home Assistant integration for **Kohler Konnect** devices, with fu
 
 ## Supported Devices
 
-- **Kohler Anthem Shower (GCS)** — full read/write support
-- Other Kohler Konnect devices (EVO, DTV+, SFC) — partial state read (PRs welcome)
+- **Kohler Anthem Shower** — full read/write support
+- Other Kohler Konnect devices (EVO, DTV+, SFC) — partial state read
 
 ---
 
