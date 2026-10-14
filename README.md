@@ -3,9 +3,7 @@
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub Release](https://img.shields.io/github/release/kenyonj/kohler-konnect-ha.svg)](https://github.com/kenyonj/kohler-konnect-ha/releases)
 
-An unofficial Home Assistant integration for **Kohler Konnect** devices, with full support for the **Anthem shower (GCS)**.
-
-> ⚠️ This is an unofficial integration, reverse-engineered from the Kohler Konnect Android app. It is not affiliated with or endorsed by Kohler Co. The API may change at any time.
+An unofficial Home Assistant integration for **Kohler Konnect** devices, with full support for the **Anthem showers**.
 
 ---
 
