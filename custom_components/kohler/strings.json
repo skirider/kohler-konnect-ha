@@ -35,5 +35,27 @@
       "already_configured": "This account is already configured.",
       "reauth_successful": "Re-authentication was successful."
     }
+  },
+  "entity": {
+    "water_heater": {
+      "anthem_shower": {
+        "state": {
+          "off": "Off",
+          "warmup": "Warmup",
+          "running": "Running",
+          "pause": "Pause"
+        },
+        "state_attributes": {
+          "operation_mode": {
+            "state": {
+              "off": "Off",
+              "warmup": "Warmup",
+              "running": "Running",
+              "pause": "Pause"
+            }
+          }
+        }
+      }
+    }
   }
 }

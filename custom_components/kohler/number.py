@@ -11,6 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import KohlerKonnectCoordinator
 from .const import DOMAIN
 from .entity import KohlerEntity
+from .helpers import async_apply_runtime
 
 
 async def async_setup_entry(
@@ -52,6 +53,7 @@ class KohlerFlowNumber(KohlerEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         self.coordinator.runtime[self._device_id].flow_percent = int(value)
         self.async_write_ha_state()
-        await self.coordinator.async_apply_runtime(
-            self._device_id, f"set flow to {int(value)}%"
+        # keep the open heads when changing flow (see helpers).
+        await async_apply_runtime(
+            self.coordinator, self._device_id, f"set flow to {int(value)}%"
         )

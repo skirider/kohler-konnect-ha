@@ -1,7 +1,8 @@
 # Kohler Konnect for Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/release/kenyonj/kohler-konnect-ha.svg)](https://github.com/kenyonj/kohler-konnect-ha/releases)
+
+> **Fork of [kenyonj/kohler-konnect-ha](https://github.com/kenyonj/kohler-konnect-ha)** (v0.5.5) with fixes for multi-valve / multi-head Anthem systems. See [Changes in this fork](#changes-in-this-fork).
 
 An unofficial Home Assistant integration for **Kohler Konnect** devices, with full support for the **Anthem showers**.
 
@@ -12,12 +13,12 @@ An unofficial Home Assistant integration for **Kohler Konnect** devices, with fu
 | Feature | Status |
 |---|---|
 | 🚿 Shower warmup (pre-heat) | ✅ Working |
-| ▶️ Start preset / experience (select entity + service) | ✅ Working |
+| ▶️ Start preset (select entity + service; experiences must be started in the Kohler app) | ✅ Working |
 | ⏹️ Stop shower | ✅ Working |
 | ⏸️ Pause shower (keeps session active) | ✅ Working |
 | 🌡️ Target temperature (get/set, live while running) | ✅ Working |
 | 💦 Flow percentage (set, live while running) | ✅ Working |
-| 🚰 Outlet selection (showerhead / handshower / tub) | ✅ Working |
+| 🚰 Run a single head, per zone (configurable names) | ✅ Working |
 | 📶 Connection state sensor | ✅ Working |
 | 🔄 Warmup state sensor | ✅ Working |
 | 🎛️ Active preset sensor (by name) | ✅ Working |
@@ -41,7 +42,7 @@ An unofficial Home Assistant integration for **Kohler Konnect** devices, with fu
 
 1. Open HACS in Home Assistant
 2. Go to **Integrations** → ⋮ → **Custom repositories**
-3. Add `https://github.com/kenyonj/kohler-konnect-ha` as an **Integration**
+3. Add `https://github.com/skirider/kohler-konnect-ha` as an **Integration**
 4. Install **Kohler Konnect**
 5. Restart Home Assistant
 
@@ -66,18 +67,25 @@ Each Anthem shower gets:
 
 | Entity | Type | What it does |
 |---|---|---|
-| `water_heater.anthem_shower` | Water heater | Start/stop/pause the shower, warmup, target temperature |
-| `select.*_preset` | Select | Start a preset or experience by name; `none` stops it |
-| `select.*_outlet` | Select | Which outlet runs when starting (showerhead, handshower, tub filler, tub + handheld) |
-| `number.*_flow` | Number | Water flow percentage; applies live if water is running |
+| `water_heater.anthem_shower` | Water heater | Modes Off / Warmup / Running / Pause. **Running** starts the Default preset (preset 1), or resumes the same heads from Pause. Target temperature applies live without changing heads |
+| `select.*_preset` | Select | Start a preset by name; `none` stops the shower. Attributes show each preset's per-valve heads |
+| `select.*_outlet` | Select | `Off` or one physical head (e.g. `Zone 1 - Handshower`). Picking a head runs only that head; shows `Multiple heads` when a preset runs several. Head names are set in `const.py` (`HEADS`) |
+| `number.*_flow` | Number | Water flow percentage; applies live (same heads) if water is running |
 | `switch.*_shower_warmup` | Switch | Start/stop warmup |
 | `binary_sensor.*_water_running` | Binary sensor | On while any valve is flowing |
 | `binary_sensor.*_valve_problem` | Binary sensor | On when a valve reports an error (codes in attributes) |
 | `sensor.*` | Sensors | Connection state, target temperature, warmup state, active preset, system state, total water used, last connected |
 
-The outlet and flow selections are held locally (the Kohler API has no "set
-without running water" command) and are applied when the shower starts — or
-immediately, if water is already running.
+Flow and target temperature are held locally (the Kohler API has no "set
+without running water" command) and are applied when a head is started — or
+immediately, to the heads already running.
+
+### Configuring head names
+
+Edit `HEADS` in `custom_components/kohler/const.py`. Keys are
+`(valveIndex, outlet number)`: `Valve1` is Zone 1, `Valve2` is Zone 2, and the
+outlet number is the order the heads appear for that zone in the Kohler
+Konnect app. Only the heads listed appear in the Outlet select.
 
 ---
 
@@ -98,7 +106,8 @@ data:
 ```
 
 ### `kohler.stop_shower`
-Immediately stops all water flow (and clears any running preset or warmup).
+Stops all water flow (and clears any running preset or warmup). Can take a few
+seconds: it confirms the shower reports no open heads before finishing.
 
 ### `kohler.pause_shower`
 Pauses the water while keeping the shower session active, so it can be resumed.
@@ -133,6 +142,44 @@ automation:
       data:
         preset_id: "1"
 ```
+
+---
+
+## Changes in this fork
+
+Verified live on a 2-valve Anthem GCS (3 heads per valve).
+
+**Presets opened the wrong heads.** Starting a preset sent outlet bitmask `0x01`
+(outlet 1 only) for every valve. The preset's stored mask uses a different
+layout (bit0 = valve flag, outlet N at bit N+1) from the command's (outlet N at
+bit N-1), so it is now converted — preferring the preset's `outlets[]` list.
+Example: stored `0x19` → command `0x06` (outlets 2 + 3).
+
+**Off / Stop didn't stop the water.** The controller reports 8 valve slots
+(`Valve1`..`Valve8`) even when 2 are installed. Off wrote to all 8; the cloud
+accepts that write but the controller ignores it. Off now addresses only valves
+in the session (open or paused), escalating OFF → STOP → OFF → preset clear and
+re-reading state between steps. In testing, the first OFF succeeds. Preset
+`none` uses the same stop. Presets started from HA never report as active, so
+the preset clear no longer depends on `active_preset_id`.
+
+**Pause only paused Valve 1.** Pause now sends STOP to every valve in the
+session.
+
+**Changing temperature/flow switched heads.** It re-sent "Valve 1, outlet 1".
+It now re-sends the heads that are open (read from `out1..out3`) with the new
+temperature/flow.
+
+**Running opened Valve 1 outlet 1.** Running now starts the Default preset, or
+resumes the previous heads from Pause.
+
+**Outlet select was tub/shower-only.** Replaced with real heads per zone.
+
+**Mode names** are translated (Off / Warmup / Running / Pause); state values
+stay lowercase, so automations are unaffected.
+
+**Preset select attributes** expose each preset's per-valve hex, mask and
+enabled outlets (`preset_valves`) for debugging.
 
 ---
 

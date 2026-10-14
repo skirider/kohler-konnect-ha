@@ -88,3 +88,19 @@ B2C_SCOPE = (
     f"openid offline_access "
     f"https://{B2C_TENANT}/{DEFAULT_API_RESOURCE}/apiaccess"
 )
+
+# ---------------------------------------------------------------------------
+# Physical heads, for the Outlet select.
+# (valveIndex, outlet number) -> label. Valve1 = Zone 1, Valve2 = Zone 2.
+# Edit this to match your shower: the outlet number is the order the heads
+# appear for that zone in the Kohler Konnect app. Only valves listed here
+# appear as choices.
+# ---------------------------------------------------------------------------
+HEADS: dict[tuple[str, int], str] = {
+    ("Valve1", 1): "Zone 1 - Body Spray",
+    ("Valve1", 2): "Zone 1 - Fixed Showerhead",
+    ("Valve1", 3): "Zone 1 - Handshower",
+    ("Valve2", 1): "Zone 2 - Body Spray",
+    ("Valve2", 2): "Zone 2 - Rainhead 1",
+    ("Valve2", 3): "Zone 2 - Rainhead 2",
+}

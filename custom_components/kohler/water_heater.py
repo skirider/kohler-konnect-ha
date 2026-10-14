@@ -30,7 +30,20 @@ from .const import (
     WARMUP_DISABLED_MESSAGE,
 )
 from .entity import KohlerEntity
-from .helpers import build_off_control, clamp_encode_temp, from_celsius, to_celsius
+from .helpers import (
+    _session_valves,
+    async_send_heads,
+    async_start_preset_tracked,
+    async_stop_shower_fully,
+    build_mode_control,
+    clamp_encode_temp,
+    extra,
+    from_celsius,
+    live_heads,
+    preset_has_valve_data,
+    to_celsius,
+)
+from kohler_anthem.models import ValveMode
 
 OPERATION_OFF = "off"
 OPERATION_WARMUP = "warmup"
@@ -83,6 +96,10 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
     """Represents the Kohler Anthem shower as a water heater entity."""
 
     _attr_name = "Anthem Shower"
+    # display names for the modes (Off / Warmup / Running / Pause)
+    # come from translations/en.json; the underlying state values stay
+    # lowercase so automations and services are unaffected.
+    _attr_translation_key = "anthem_shower"
     _attr_icon = "mdi:shower-head"
     _attr_target_temperature_step = 0.5
     _attr_supported_features = SUPPORT_FLAGS
@@ -126,6 +143,12 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
     def _handle_coordinator_update(self) -> None:
         """Clear optimistic operation when fresh data arrives."""
         self._optimistic_operation = None
+        # remember which heads are open (also for sessions started
+        # at the wall controller or the Kohler app) so Pause -> Running resumes
+        # the same heads.
+        heads = live_heads(self._state)
+        if heads:
+            extra(self._device_id)["last_heads"] = heads
         super()._handle_coordinator_update()
 
     def _real_operation(self) -> str:
@@ -204,40 +227,55 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
         target = self.target_temperature or self._default_target
         return to_celsius(target, self.coordinator.temperature_unit)
 
-    def _turn_on_coro(self, temperature_celsius: float | None = None) -> Any:
-        """Coroutine that starts water on the selected outlet at the desired
-        flow (both held by the coordinator's per-device runtime settings)."""
-        runtime = self._runtime
-        return self.coordinator.client.turn_on_outlet(
-            self.coordinator.tenant_id,
-            self._device_id,
-            runtime.outlet,
-            temperature_celsius=(
-                temperature_celsius
-                if temperature_celsius is not None
-                else self._target_celsius()
-            ),
-            flow_percent=runtime.flow_percent,
-        )
+    def _default_preset(self):
+        """The preset "Running" starts: id 1, else one titled "Default...",
+        else the first preset that carries valve settings."""
+        presets = self.coordinator.presets.get(self._device_id)
+        candidates = [
+            p for p in (presets.presets if presets else []) if preset_has_valve_data(p)
+        ]
+        for p in candidates:
+            if str(p.preset_id) == "1":
+                return p
+        for p in candidates:
+            if "default" in (p.title or "").lower():
+                return p
+        return candidates[0] if candidates else None
+
+    async def _async_start_running(self) -> None:
+        """"Running" = resume if paused, else start the Default
+        preset. (Upstream opened Valve1 / outlet 1 only.)"""
+        operation = self._real_operation()
+        if operation == OPERATION_RUNNING:
+            return
+        last_heads = extra(self._device_id)["last_heads"]
+        if operation == OPERATION_PAUSE and last_heads:
+            await async_send_heads(
+                self.coordinator,
+                self._device_id,
+                dict(last_heads),
+                self._target_celsius(),
+                self._runtime.flow_percent,
+                "resume shower",
+            )
+            return
+        preset = self._default_preset()
+        if preset is None:
+            raise HomeAssistantError(
+                "No shower preset with valve settings was found. Create one in "
+                "the Kohler Konnect app, then try again."
+            )
+        self._target_temperature = None
+        await async_start_preset_tracked(self.coordinator, self._device_id, preset)
 
     async def _async_turn_off(self) -> None:
-        """Stop any session-level activity, then close the valves."""
-        client = self.coordinator.client
-        tenant_id = self.coordinator.tenant_id
-        state = self._state
+        """escalating stop (preset clear -> STOP -> OFF).
 
-        # Warmup and presets are session-level state on the controller;
-        # clear them first so it doesn't keep the valves open. stop_warmup
-        # sends presetOrExperienceId "0", which stops both.
-        if state is not None and (
-            state.is_warming_up or state.state.active_preset_id is not None
-        ):
-            await client.stop_warmup(tenant_id, self._device_id)
-
-        await client.control_valve(
-            tenant_id,
-            self._device_id,
-            build_off_control(state, self._target_celsius()),
+        See helpers.async_stop_shower_fully for why upstream's single
+        OFF write wasn't enough on a multi-valve system.
+        """
+        await async_stop_shower_fully(
+            self.coordinator, self._device_id, self._target_celsius()
         )
 
     async def _run_command_and_refresh(self, operation: str, coro: Any) -> None:
@@ -267,14 +305,24 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
         if temp is None:
             return
         self._target_temperature = float(temp)
+        temp_c = to_celsius(float(temp), self.coordinator.temperature_unit)
+        extra(self._device_id)["target_celsius"] = temp_c
         self.async_write_ha_state()
 
         # If the shower is actively running, apply the new temperature live.
-        if self._real_operation() == OPERATION_RUNNING:
+        # keep the heads that are open (upstream switched to
+        # Valve1 / outlet 1).
+        heads = live_heads(self._state)
+        if self._real_operation() == OPERATION_RUNNING and heads:
             await self._run_command_and_refresh(
                 OPERATION_RUNNING,
-                self._turn_on_coro(
-                    to_celsius(float(temp), self.coordinator.temperature_unit)
+                async_send_heads(
+                    self.coordinator,
+                    self._device_id,
+                    heads,
+                    temp_c,
+                    self._runtime.flow_percent,
+                    "set temperature",
                 ),
             )
 
@@ -288,7 +336,7 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
         elif operation_mode == OPERATION_OFF:
             coro = self._async_turn_off()
         elif operation_mode == OPERATION_RUNNING:
-            coro = self._turn_on_coro()
+            coro = self._async_start_running()
         elif operation_mode == OPERATION_PAUSE:
             coro = self._pause_coro()
         else:
@@ -297,13 +345,19 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
         await self._run_command_and_refresh(operation_mode, coro)
 
     def _pause_coro(self) -> Any:
-        """Coroutine that pauses water flow but keeps the session active."""
-        runtime = self._runtime
-        return self.coordinator.client.pause(
+        """Coroutine that pauses water flow but keeps the session active.
+
+        STOP (0x40) on every valve in the session — the library's
+        pause addresses Valve1 only, which would leave Zone 2 running.
+        """
+        return self.coordinator.client.control_valve(
             self.coordinator.tenant_id,
             self._device_id,
-            temperature_celsius=clamp_encode_temp(self._target_celsius()),
-            flow_percent=runtime.flow_percent,
+            build_mode_control(
+                _session_valves(self._state),
+                clamp_encode_temp(self._target_celsius()),
+                ValveMode.STOP,
+            ),
         )
 
     # -- entity services ---------------------------------------------------- #
@@ -329,7 +383,8 @@ class KohlerAnthemShower(KohlerEntity, WaterHeaterEntity):
         self._optimistic_operation = OPERATION_RUNNING
         self.async_write_ha_state()
         try:
-            await self.coordinator.async_start_preset(self._device_id, preset)
+            self._target_temperature = None
+            await async_start_preset_tracked(self.coordinator, self._device_id, preset)
         except Exception:
             self._optimistic_operation = None
             self.async_write_ha_state()
