@@ -21,6 +21,35 @@ from kohler_anthem.models import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _install_null_tolerant_state_parsing() -> None:
+    """Let kohler-anthem parse state responses that contain JSON nulls.
+
+    The Kohler cloud now returns ``null`` for ``presetOrExperienceId`` and
+    ``ioTActive`` when the shower is idle, but kohler-anthem 0.2.0 declares
+    both as ``str`` and raises a ValidationError, which leaves the config
+    entry stuck in SETUP_RETRY. Dropping null values lets the library's own
+    field defaults apply. Idempotent; remove once the library handles nulls.
+    """
+    if getattr(DeviceState.from_response, "_null_tolerant", False):
+        return
+    original = DeviceState.from_response.__func__
+
+    def from_response(cls, data):  # type: ignore[no-untyped-def]
+        inner = data.get("state") if isinstance(data, dict) else None
+        if isinstance(inner, dict):
+            data = {
+                **data,
+                "state": {k: v for k, v in inner.items() if v is not None},
+            }
+        return original(cls, data)
+
+    from_response._null_tolerant = True  # type: ignore[attr-defined]
+    DeviceState.from_response = classmethod(from_response)  # type: ignore[method-assign]
+
+
+_install_null_tolerant_state_parsing()
+
 # Maps the API's valveIndex names to the solowritesystem payload field and the
 # valve-prefix byte the firmware expects in each 4-byte command.
 VALVE_FIELD_AND_PREFIX = {
